@@ -1,4 +1,5 @@
 import { CartProvider } from './context/CartContext';
+import { AuthProvider } from './context/AuthContext';
 import { Cart } from './components/Cart';
 import './globals.css';
 
@@ -11,10 +12,12 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
-        <CartProvider>
-          {children}
-          <Cart />
-        </CartProvider>
+        <AuthProvider>
+          <CartProvider>
+            {children}
+            <Cart />
+          </CartProvider>
+        </AuthProvider>
       </body>
     </html>
   );
