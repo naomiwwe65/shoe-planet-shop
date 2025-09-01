@@ -1,6 +1,9 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from '../../convex/_generated/api';
+import { useAuth } from './AuthContext';
 
 const CartContext = createContext();
 
@@ -69,6 +72,64 @@ export function CartProvider({ children }) {
     isOpen: false,
   });
 
+  const { user, isAuthenticated } = useAuth();
+  
+  // Convex mutations
+  const addToCartMutation = useMutation(api.cart.addToCart);
+  const updateCartItemMutation = useMutation(api.cart.updateCartItem);
+  const removeFromCartMutation = useMutation(api.cart.removeFromCart);
+  const clearCartMutation = useMutation(api.cart.clearCart);
+
+  // Real-time cart data from Convex (only when user is authenticated)
+  const convexCartItems = useQuery(
+    api.cart.getCartWithProducts,
+    isAuthenticated && user ? { userId: user.id } : "skip"
+  );
+
+  // Update local state when Convex data changes
+  useEffect(() => {
+    if (convexCartItems && isAuthenticated) {
+      // Convert Convex cart items to local format
+      const localItems = convexCartItems.map(item => ({
+        id: item.productId,
+        name: item.product?.name || 'Unknown Product',
+        price: item.product?.price || 0,
+        image: item.product?.image || '',
+        quantity: item.quantity,
+        size: item.size,
+        cartItemId: item._id, // Store Convex ID for mutations
+      }));
+      
+      dispatch({ type: 'SET_CART_ITEMS', payload: localItems });
+    } else if (!isAuthenticated) {
+      // Load from localStorage when not authenticated
+      try {
+        if (typeof window !== 'undefined') {
+          const savedCart = localStorage.getItem('cart');
+          if (savedCart) {
+            const items = JSON.parse(savedCart);
+            if (Array.isArray(items) && items.length > 0) {
+              dispatch({ type: 'SET_CART_ITEMS', payload: items });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error loading cart from localStorage:', error);
+      }
+    }
+  }, [convexCartItems, isAuthenticated]);
+
+  // Save to localStorage when not authenticated
+  useEffect(() => {
+    if (!isAuthenticated && typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('cart', JSON.stringify(state.items));
+      } catch (error) {
+        console.error('Error saving cart to localStorage:', error);
+      }
+    }
+  }, [state.items, isAuthenticated]);
+
   // Helper function to parse price string to number
   const parsePrice = (priceString) => {
     if (typeof priceString === 'number') return priceString;
@@ -83,60 +144,92 @@ export function CartProvider({ children }) {
   const shippingCost = subtotal > 5000 ? 0 : 500;
   const totalPrice = subtotal + shippingCost;
 
-  // Save cart to localStorage
-  useEffect(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('cart', JSON.stringify(state.items));
-        console.log('Cart saved to localStorage:', state.items);
+  const addToCart = async (product) => {
+    console.log('CartContext - addToCart called with:', product);
+    
+    if (isAuthenticated && user) {
+      // Use Convex for authenticated users
+      try {
+        await addToCartMutation({
+          userId: user.id,
+          productId: product.id,
+          quantity: 1,
+          size: product.size || undefined,
+        });
+        console.log('Added to Convex cart successfully');
+      } catch (error) {
+        console.error('Error adding to Convex cart:', error);
+        // Fallback to local state
+        dispatch({ type: 'ADD_TO_CART', payload: product });
       }
-    } catch (error) {
-      console.error('Error saving cart to localStorage:', error);
+    } else {
+      // Use local state for non-authenticated users
+      dispatch({ type: 'ADD_TO_CART', payload: product });
     }
-  }, [state.items]);
+  };
 
-  // Load cart from localStorage on mount
-  useEffect(() => {
-    try {
-      if (typeof window !== 'undefined') {
-        const savedCart = localStorage.getItem('cart');
-        console.log('Loading cart from localStorage:', savedCart);
-        if (savedCart) {
-          const items = JSON.parse(savedCart);
-          if (Array.isArray(items) && items.length > 0) {
-            console.log('Restoring cart items:', items);
-            dispatch({ type: 'SET_CART_ITEMS', payload: items });
-          }
+  const removeFromCart = async (productId) => {
+    if (isAuthenticated && user) {
+      // Find the cart item ID for Convex
+      const cartItem = state.items.find(item => item.id === productId);
+      if (cartItem && cartItem.cartItemId) {
+        try {
+          await removeFromCartMutation({ cartItemId: cartItem.cartItemId });
+          console.log('Removed from Convex cart successfully');
+        } catch (error) {
+          console.error('Error removing from Convex cart:', error);
+          // Fallback to local state
+          dispatch({ type: 'REMOVE_FROM_CART', payload: productId });
         }
       }
-    } catch (error) {
-      console.error('Error loading cart from localStorage:', error);
-      if (typeof window !== 'undefined') {
-        localStorage.removeItem('cart');
-      }
-    }
-  }, []);
-
-  const addToCart = (product) => {
-    console.log('CartContext - addToCart called with:', product);
-    console.log('CartContext - Current state before adding:', state.items);
-    dispatch({ type: 'ADD_TO_CART', payload: product });
-  };
-
-  const removeFromCart = (productId) => {
-    dispatch({ type: 'REMOVE_FROM_CART', payload: productId });
-  };
-
-  const updateQuantity = (productId, quantity) => {
-    if (quantity <= 0) {
-      removeFromCart(productId);
     } else {
+      // Use local state for non-authenticated users
+      dispatch({ type: 'REMOVE_FROM_CART', payload: productId });
+    }
+  };
+
+  const updateQuantity = async (productId, quantity) => {
+    if (quantity <= 0) {
+      await removeFromCart(productId);
+      return;
+    }
+
+    if (isAuthenticated && user) {
+      // Find the cart item ID for Convex
+      const cartItem = state.items.find(item => item.id === productId);
+      if (cartItem && cartItem.cartItemId) {
+        try {
+          await updateCartItemMutation({
+            cartItemId: cartItem.cartItemId,
+            quantity: quantity,
+          });
+          console.log('Updated Convex cart quantity successfully');
+        } catch (error) {
+          console.error('Error updating Convex cart quantity:', error);
+          // Fallback to local state
+          dispatch({ type: 'UPDATE_QUANTITY', payload: { id: productId, quantity } });
+        }
+      }
+    } else {
+      // Use local state for non-authenticated users
       dispatch({ type: 'UPDATE_QUANTITY', payload: { id: productId, quantity } });
     }
   };
 
-  const clearCart = () => {
-    dispatch({ type: 'CLEAR_CART' });
+  const clearCart = async () => {
+    if (isAuthenticated && user) {
+      try {
+        await clearCartMutation({ userId: user.id });
+        console.log('Cleared Convex cart successfully');
+      } catch (error) {
+        console.error('Error clearing Convex cart:', error);
+        // Fallback to local state
+        dispatch({ type: 'CLEAR_CART' });
+      }
+    } else {
+      // Use local state for non-authenticated users
+      dispatch({ type: 'CLEAR_CART' });
+    }
   };
 
   const toggleCart = () => {
