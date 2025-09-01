@@ -1,5 +1,6 @@
 import { CartProvider } from './context/CartContext';
 import { AuthProvider } from './context/AuthContext';
+import ConvexClientProvider from './ConvexClientProvider';
 import { Cart } from './components/Cart';
 import './globals.css';
 
@@ -12,12 +13,14 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
-        <AuthProvider>
-          <CartProvider>
-            {children}
-            <Cart />
-          </CartProvider>
-        </AuthProvider>
+        <ConvexClientProvider>
+          <AuthProvider>
+            <CartProvider>
+              {children}
+              <Cart />
+            </CartProvider>
+          </AuthProvider>
+        </ConvexClientProvider>
       </body>
     </html>
   );
